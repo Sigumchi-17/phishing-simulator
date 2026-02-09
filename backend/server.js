@@ -48,6 +48,22 @@ function buildDetectorsFromRules(scoringRules) {
   }
 
   const keywordLibrary = {
+    // === ROMANCE SCAM DETECTORS ===
+    early_emotional_involvement: ["보고싶", "좋아해", "사랑", "운명", "너밖에", "매일 생각", "특별한 사이", "마음이 가", "의지하고 싶"],
+    moved_to_external_messenger: ["카톡", "카카오톡", "텔레그램", "라인", "왓츠앱", "인스타", "디엠", "dm", "메신저로", "번호 알려"],
+    accepted_no_meeting_or_no_video_call: ["괜찮아", "이해해", "나중에", "상관없어", "영상통화 말고", "만나는 건 나중", "바쁘니까"],
+    accepted_pity_or_crisis_story: ["불쌍", "안타깝", "마음 아파", "힘들겠다", "괜찮아?", "도와주고 싶", "걱정돼"],
+    attempted_identity_verification: ["확인해", "검증", "증명", "신분증", "여권", "검색해볼", "사진 보내", "실명"],
+    requested_real_time_video_call: ["영상통화", "페이스타임", "지금 통화", "실시간으로", "캠 켜", "화상통화"],
+    refused_money_or_investment_request: ["돈은 못", "송금 못", "보내기 싫", "안 보낼", "금전적인 건 안", "투자는 안"],
+    questioned_fast_emotional_attachment: ["너무 빨라", "갑작스럽", "이상한데", "아직 잘 모르", "왜 이렇게 빨리"],
+    insisted_on_meeting_before_continuing: ["만나고", "직접 보고", "보기 전엔", "확인 전엔", "검증 없이는"],
+    noticed_inconsistencies_in_personal_story: ["말이 다른데", "아까랑 다르", "앞뒤가 안 맞", "설명이 바뀌", "이상해"],
+    paused_relationship_progress_for_verification: ["일단 멈추", "천천히", "확인하고", "검증부터", "지켜보자"],
+    explicitly_mentioned_romance_scam: ["로맨스 스캠", "연애 사기", "사기 같아"],
+    ended_relationship_due_to_suspicion: ["그만하자", "연락하지 마", "차단할게", "끝내자", "대화 종료"],
+
+
     name_provided: ["이름은", "성함은", "제 이름", "제이름"],
     address_provided: ["주소", "배송지", "사는 곳", "사는곳"],
     phone_partial_provided: ["전화번호", "연락처", "010", "011", "016", "017", "018", "019"],
@@ -102,6 +118,33 @@ function buildDetectorsFromRules(scoringRules) {
     explicitly_called_out_scam: /(사기|피싱|보이스피싱|스캠)/,
     rrn_provided: /\b\d{6}-?\d{7}\b/,
     account_provided: /\b\d{2,4}-\d{2,6}-\d{2,6}\b|\b\d{9,16}\b/,
+    // === ROMANCE SCAM REGEX ===
+early_emotional_involvement: /(보고\s*싶|사랑|좋아해|운명|너\s*밖에|매일\s*생각)/,
+
+moved_to_external_messenger: /(카톡|카카오톡|텔레그램|라인|왓츠앱|인스타|dm|디엠|번호\s*알려)/,
+
+accepted_no_meeting_or_no_video_call: /(영상\s*통화.*(안|말고)|만나.*나중|괜찮아|이해해)/,
+
+accepted_pity_or_crisis_story: /(불쌍|안타깝|힘들겠|마음\s*아파|도와주고)/,
+
+attempted_identity_verification: /(신분증|여권|증명|검증|확인\s*해|검색해)/,
+
+requested_real_time_video_call: /(영상\s*통화|화상\s*통화|페이스\s*타임|지금\s*통화|실시간)/,
+
+refused_money_or_investment_request: /(돈.*못|송금.*못|안\s*보낼|금전.*안)/,
+
+questioned_fast_emotional_attachment: /(너무\s*빠르|갑작|이상한데|왜\s*이렇게\s*빨리)/,
+
+insisted_on_meeting_before_continuing: /(만나.*전|직접\s*보고|검증\s*없이는)/,
+
+noticed_inconsistencies_in_personal_story: /(말이\s*다르|앞뒤.*안\s*맞|설명.*바뀌)/,
+
+paused_relationship_progress_for_verification: /(일단\s*멈추|천천히|확인.*먼저)/,
+
+explicitly_mentioned_romance_scam: /(로맨스\s*스캠|연애\s*사기)/,
+
+ended_relationship_due_to_suspicion: /(그만하자|차단|연락\s*하지\s*마|끝내자)/,
+
 
   };
 
@@ -266,6 +309,11 @@ app.post("/rooms", async (req, res) => {
 - 사용자가 "주문한 적 없다"라고 해도 대화를 종료하지 마라. 오배송/명의도용/주소 누락 등 다른 이유를 들어 확인 절차로 유도하라.
 - 사용자가 거절하면 명분을 바꿔 우회하라.
 
+[로맨스 스캠 전용 규칙]
+- 최소 3~5턴은 정보 요구 금지
+- 공감/관심/일상 질문만 허용
+- 금전/절차 단어는 후반부에서만
+
 [시나리오 톤]
 ${scenario.tone || "시나리오에 맞는 자연스러운 톤"}
 
@@ -344,6 +392,11 @@ app.post("/chat", async (req, res) => {
           - 같은 요구를 2번 반복하지 마라. 거절하면 명분을 바꿔 우회하라.
           - 1~2문장으로 짧게.
           - 출력은 JSON 하나: { "reply": "...", "analysis": "..." }
+
+          [로맨스 스캠 전용 규칙]
+          - 최소 3~5턴은 정보 요구 금지
+          - 공감/관심/일상 질문만 허용
+          - 금전/절차 단어는 후반부에서만
 
           [시나리오 톤]
           ${scenario.tone || "시나리오에 맞는 자연스러운 톤"}
@@ -482,6 +535,21 @@ function buildRuleBasedFeedback({ scenarioType, scenarioKey, stats }) {
     mentioned_checking_official_app_or_website: "공식 채널 확인 언급",
     explicitly_ended_conversation: "대화 종료/차단",
     responded_to_money_or_investment_request: "송금/금전 요구에 반응",
+
+    // ✅ ROMANCE 전용 이벤트(RO1~RO14) 표시명
+    early_emotional_involvement: "빠른 감정 몰입 표현",
+    moved_to_external_messenger: "외부 메신저 이동",
+    accepted_no_meeting_or_no_video_call: "만남/영상통화 회피 수용",
+    accepted_pity_or_crisis_story: "위기/불쌍함 스토리 수용",
+    attempted_identity_verification: "신원 검증 시도",
+    requested_real_time_video_call: "실시간 영상통화 요구",
+    refused_money_or_investment_request: "금전/도움 요청 거부",
+    questioned_fast_emotional_attachment: "빠른 감정 몰입 의문 제기",
+    insisted_on_meeting_before_continuing: "만남/검증 없이는 진행 거부",
+    noticed_inconsistencies_in_personal_story: "스토리 불일치 지적",
+    paused_relationship_progress_for_verification: "관계 진전 중단 후 확인 우선",
+    explicitly_mentioned_romance_scam: "로맨스 스캠 가능성 언급",
+    ended_relationship_due_to_suspicion: "의심으로 관계/대화 종료",
   };
 
   const top = topEvents.length
@@ -566,6 +634,25 @@ const SAFE_QUESTION_EVENTS = [
   "requested_face_to_face_or_office_visit",
 ];
 
+const ROMANCE_RISK_EVENTS = [
+    "early_emotional_involvement",
+    "moved_to_external_messenger",
+    "accepted_no_meeting_or_no_video_call",
+    "accepted_pity_or_crisis_story",
+  ];
+
+const ROMANCE_DEFENSE_EVENTS = [
+  "attempted_identity_verification",
+  "requested_real_time_video_call",
+  "refused_money_or_investment_request",
+  "questioned_fast_emotional_attachment",
+  "insisted_on_meeting_before_continuing",
+  "noticed_inconsistencies_in_personal_story",
+  "paused_relationship_progress_for_verification",
+  "explicitly_mentioned_romance_scam",
+  "ended_relationship_due_to_suspicion",
+];
+
 function buildFeedback(stats) {
   const didWell = [];
   const improve = [];
@@ -606,6 +693,38 @@ function buildFeedback(stats) {
     pushOnce(didWell, "발송인/주문/사건번호 등 구체 정보를 요구한 건 상대를 압박하고 검증에 도움 됩니다.");
   }
 
+  // ✅ 로맨스: 신원 검증 시도
+  if (has("attempted_identity_verification")) {
+    pushOnce(didWell, "신원 검증을 시도한 대응이 좋았습니다. 로맨스 스캠에서 가장 효과적인 방어 축입니다.");
+  }
+
+  // ✅ 로맨스: 영상통화 요구
+  if (has("requested_real_time_video_call")) {
+    pushOnce(didWell, "실시간 영상통화를 명확히 요구한 점이 좋았습니다. 회피하면 의심 근거가 더 강해집니다.");
+  }
+
+  // ✅ 로맨스: 금전/도움 거부
+  if (has("refused_money_or_investment_request")) {
+    pushOnce(didWell, "금전/도움 요청을 명확히 거부한 대응이 매우 적절했습니다.");
+  }
+
+  // ✅ 로맨스: 빠른 몰입 의문/관계 중단/스캠 언급/종료
+  if (has("questioned_fast_emotional_attachment")) {
+    pushOnce(didWell, "감정선이 너무 빠른 점을 의심한 판단이 좋았습니다.");
+  }
+
+  if (has("paused_relationship_progress_for_verification")) {
+    pushOnce(didWell, "관계 진전을 멈추고 확인을 우선한 선택이 좋았습니다.");
+  }
+
+  if (has("explicitly_mentioned_romance_scam")) {
+    pushOnce(didWell, "로맨스 스캠 가능성을 직접 언급한 건 상대의 심리전을 끊는 데 효과적입니다.");
+  }
+
+  if (has("ended_relationship_due_to_suspicion")) {
+    pushOnce(didWell, "의심을 이유로 관계/대화를 종료한 선택은 최상급 대응입니다.");
+  }
+
   /* =========================
      ⚠️ 개선할 점 (detected → 무조건 추가)
   ========================= */
@@ -626,6 +745,25 @@ function buildFeedback(stats) {
   // 금전 요구 반응
   if (has("responded_to_money_or_investment_request")) {
     pushOnce(improve, "금전 요구에 반응하는 순간 사기 성공 확률이 급상승합니다. 즉시 대화를 종료해야 합니다.");
+  }
+
+  if (has("early_emotional_involvement")) {
+    pushOnce(improve, "짧은 시간 안에 감정적으로 깊게 반응하면 상대가 심리적 레버리지를 잡기 쉬워집니다.");
+  }
+
+  // ✅ 로맨스: 외부 메신저 이동(RO2)
+  if (has("moved_to_external_messenger")) {
+    pushOnce(improve, "외부 메신저로 이동하면 신고/증거 확보가 어려워지고, 본격적인 사기 전개로 넘어가기 쉽습니다.");
+  }
+
+  // ✅ 로맨스: 만남/영상통화 회피 수용(RO4)
+  if (has("accepted_no_meeting_or_no_video_call")) {
+    pushOnce(improve, "만남/영상통화 회피를 받아주면 ‘실존 검증’이 사라져 위험도가 커집니다.");
+  }
+
+  // ✅ 로맨스: 위기/불쌍함 스토리 수용(RO5)
+  if (has("accepted_pity_or_crisis_story")) {
+    pushOnce(improve, "위기·불쌍함 스토리에 빨리 반응하면 ‘도움(=돈)’으로 자연스럽게 연결됩니다.");
   }
 
   /* =========================
@@ -665,7 +803,6 @@ function buildFeedback(stats) {
       : "한 줄로 말하면: 기본기는 좋습니다. ‘압박+링크+개인정보’ 3종 세트만 계속 피하세요.",
   };
 }
-
 /**
  * ✅ 대화 종료 → 최종 평가 + 피드백 반환
  * 프론트에서 "종료" 버튼 누를 때 호출하면 됨.
