@@ -113,6 +113,8 @@
     { "code": "CM11", "event": "explicitly_called_out_scam", "weight": -0.20, "description": "사기·피싱 가능성을 직접적으로 지적함" },
     { "code": "CM12", "event": "reported_incident_to_platform_or_authority", "weight": -0.35, "description": "플랫폼이나 기관에 신고했다고 언급함" },
     { "code": "CM13", "event": "rrn_provided", "weight": 0.60, "description": "주민번호 제공" },
-{ "code": "CM14", "event": "account_provided", "weight": 0.50, "description": "계좌번호 제공" }
+    { "code": "CM14", "event": "account_provided", "weight": 0.50, "description": "계좌번호 제공" },
+    { "code": "CM15", "event": "name_provided", "weight": 0.50, "description": "이름 제공" },
+    { "code": "CM16", "event": "phone_info_provided", "weight": 0.50, "description": "전화번호 제공" }
   ]
 }

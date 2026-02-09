@@ -51,6 +51,7 @@ function buildDetectorsFromRules(scoringRules) {
     name_provided: ["이름은", "성함은", "제 이름", "제이름"],
     address_provided: ["주소", "배송지", "사는 곳", "사는곳"],
     phone_partial_provided: ["전화번호", "연락처", "010", "011", "016", "017", "018", "019"],
+    phone_info_provided: ["전화번호", "연락처", "010", "011", "016", "017", "018", "019"],
 
     clicked_link: ["클릭", "눌렀", "접속", "들어갔", "열었", "링크"],
     typed_personal_information: ["입력", "작성", "기입", "적었"],
@@ -129,7 +130,7 @@ function buildDetectorsFromRules(scoringRules) {
       continue;
     }
     const guessed = autoKeywordsFromEventName(eventName);
-    detectors[eventName] = () => false;
+    detectors[eventName] = makeKeywordDetector(guessed);
   }
 
   return { detectors, eventList: Array.from(eventSet).sort() };
@@ -218,7 +219,7 @@ const scenarioKeyMap = {
   "검찰 사칭": "police",
   "보험사 사칭": "insurance",
   "가족 사칭": "family",
-  "사용자를 유혹하여 금품 갈취": "romance",
+  "로맨스 스캠": "romance",
 };
 
 /**
@@ -258,7 +259,10 @@ app.post("/rooms", async (req, res) => {
 - 너무 길지 않게, 대화 시작 톤으로만 접근한다.
 - 응답은 반드시 JSON 형식 하나만 출력한다.
 - 시작 문장은 이미 사용자에게 전송된 상태다.
-- 매 응답은 반드시 다음 중 하나로 끝나야 한다: (1) 개인정보/확인정보 요청, (2) 다음 절차 안내(링크/인증/재확인), (3) 거절 시 대체 확인 방식 제시
+- 매 응답은 반드시 다음 중 하나로 끝나야 한다: 
+  (1) 개인정보/확인정보 요청, 
+  (2) 다음 절차 안내(링크/인증/재확인), 
+  (3) 거절 시 대체 확인 방식 제시
 - 사용자가 "주문한 적 없다"라고 해도 대화를 종료하지 마라. 오배송/명의도용/주소 누락 등 다른 이유를 들어 확인 절차로 유도하라.
 - 사용자가 거절하면 명분을 바꿔 우회하라.
 
@@ -524,23 +528,122 @@ function buildRuleBasedFeedback({ scenarioType, scenarioKey, stats }) {
     "공식 채널로 역확인.",
   ]).map((t) => `- ${t}`).join("\n");
 
-  // 잘한 점 / 개선점은 이벤트 기반으로 대충 뽑기
+
+  const PERSONAL_INFO_EVENTS = [
+  "name_provided",
+  "phone_partial_provided",
+  "phone_info_provided",
+  "address_provided",
+  "rrn_provided",
+  "account_provided",
+  "typed_personal_information",
+];
+
+const OFFICIAL_CHECK_EVENTS = [
+  "mentioned_checking_official_app_or_website",
+  "stated_calling_official_customer_service",
+];
+
+const REFUSAL_EVENTS = [
+  "refused_to_provide_personal_information",
+  "refused_app_install_or_remote_control",
+];
+
+const STOP_EVENTS = [
+  "explicitly_ended_conversation",
+  "conversation_stopped_or_blocked",
+  "blocked_or_reported_sender",
+];
+
+const AWARENESS_EVENTS = [
+  "warned_about_link_risk",
+  "explicitly_called_out_scam",
+];
+
+const SAFE_QUESTION_EVENTS = [
+  "asked_for_sender_or_order_details",
+  "asked_for_case_number_or_department",
+  "requested_face_to_face_or_office_visit",
+];
+
+function buildFeedback(stats) {
   const didWell = [];
   const improve = [];
 
-  if (stats.eventCounts.mentioned_checking_official_app_or_website)
-    didWell.push("공식 채널 확인을 언급한 점이 좋았습니다.");
-  if (stats.eventCounts.refused_to_provide_personal_information)
-    didWell.push("개인정보 제공을 거절한 응답이 방어에 도움이 됐습니다.");
-  if (stats.eventCounts.explicitly_ended_conversation)
-    didWell.push("대화를 끊는 선택은 피해를 크게 줄입니다.");
+  const counts = stats?.eventCounts || {};
+  const has = (k) => (counts[k] || 0) > 0;
 
-  if (stats.eventCounts.verification_link_or_process_accepted)
-    improve.push("링크 클릭/인증 진행은 가장 위험한 행동입니다.");
-  if (stats.eventCounts.address_provided || stats.eventCounts.name_provided || stats.eventCounts.phone_partial_provided)
-    improve.push("실명/주소/전화번호는 조합되면 ‘본인확인’에 바로 써먹힙니다.");
-  if (stats.eventCounts.responded_to_money_or_investment_request)
-    improve.push("금전 요구에 반응하는 순간 게임 끝입니다. 즉시 끊어야 합니다.");
+  const pushOnce = (arr, msg) => {
+    if (!arr.includes(msg)) arr.push(msg);
+  };
+
+  /* =========================
+     ✅ 잘한 점 (detected → 바로 칭찬)
+  ========================= */
+
+  // 공식 채널 확인
+  if (OFFICIAL_CHECK_EVENTS.some(has)) {
+    pushOnce(didWell, "공식 채널(앱/홈페이지/대표번호/고객센터)로 확인하려 한 점이 좋았습니다.");
+  }
+
+  // 거절(개인정보/설치/원격)
+  if (REFUSAL_EVENTS.some(has)) {
+    pushOnce(didWell, "개인정보 제공이나 앱 설치·원격제어 요청을 거절한 대응이 매우 적절했습니다.");
+  }
+
+  // 대화 종료/차단/신고
+  if (STOP_EVENTS.some(has)) {
+    pushOnce(didWell, "대화를 종료하거나 차단/신고한 선택은 피해를 크게 줄였습니다.");
+  }
+
+  // 위험 인지(피싱 경고/사기 지적)
+  if (AWARENESS_EVENTS.some(has)) {
+    pushOnce(didWell, "피싱/사기 가능성을 먼저 짚은 판단이 좋았습니다.");
+  }
+
+  // “정보 더 달라” 같은 안전한 되물음(상대 정체 확인에 도움)
+  if (SAFE_QUESTION_EVENTS.some(has)) {
+    pushOnce(didWell, "발송인/주문/사건번호 등 구체 정보를 요구한 건 상대를 압박하고 검증에 도움 됩니다.");
+  }
+
+  /* =========================
+     ⚠️ 개선할 점 (detected → 무조건 추가)
+  ========================= */
+
+  // 개인정보 제공 — 하나라도 있으면 무조건
+  if (PERSONAL_INFO_EVENTS.some(has)) {
+    pushOnce(
+      improve,
+      "이름·전화번호·주소·계좌 등 개인정보가 제공되었습니다. 이런 정보는 조합되는 순간 본인확인에 바로 악용됩니다."
+    );
+  }
+
+  // 링크/인증/설치(위험 트리거)
+  if (has("clicked_link") || has("verification_link_or_process_accepted") || has("accepted_link_or_app_install")) {
+    pushOnce(improve, "링크 클릭/인증 진행/앱 설치는 가장 위험한 행동입니다.");
+  }
+
+  // 금전 요구 반응
+  if (has("responded_to_money_or_investment_request")) {
+    pushOnce(improve, "금전 요구에 반응하는 순간 사기 성공 확률이 급상승합니다. 즉시 대화를 종료해야 합니다.");
+  }
+
+  /* =========================
+     🧯 안전장치(비어있을 때 기본 문구)
+  ========================= */
+  if (didWell.length === 0) {
+    pushOnce(didWell, "뚜렷한 방어 행동은 감지되지 않았습니다. 다음엔 공식 채널 확인/거절/차단 같은 액션을 넣어보세요.");
+  }
+
+  if (improve.length === 0) {
+    pushOnce(improve, "치명적인 실수는 감지되지 않았습니다. 그래도 의심 상황에서는 더 빠르게 대화를 종료하는 게 안전합니다.");
+  }
+
+  return { didWell, improve };
+}
+
+
+  const {didWell, improve} = buildFeedback(stats);
 
   const didWellText = didWell.length ? didWell.map((x) => `- ${x}`).join("\n") : "- (특별히 감지된 방어 행동은 적었습니다.)";
   const improveText = improve.length ? improve.map((x) => `- ${x}`).join("\n") : "- (치명적인 실수는 크게 감지되지 않았습니다.)";
