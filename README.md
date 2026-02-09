@@ -57,11 +57,11 @@
 OPENAI_API_KEY=본인_API_키
 ```
 2. backend 실행
-   ```bash
-   cd backend
-   npm install
-   node server.js
-   ```
+```bash
+cd backend
+npm install
+node server.js
+```
 3. frontend 실행
    `frontend/index.html` 파일을 브라우저로 직접 실행
 
