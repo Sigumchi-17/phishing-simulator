@@ -16,5 +16,6 @@
 1. backend 폴더에 `.env` 파일 생성
 ```env
 OPENAI_API_KEY=본인_API_키
+```
 2. node server.js 실행
 3. frontend/index.html 실행
