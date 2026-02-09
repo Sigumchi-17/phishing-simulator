@@ -1,0 +1,624 @@
+import db from "./db.js";
+import fs from "fs";
+import express from "express";
+import dotenv from "dotenv";
+import OpenAI from "openai";
+import cors from "cors";
+
+dotenv.config();
+
+const app = express();
+
+app.use(cors({
+  origin: ["http://127.0.0.1:5500", "http://localhost:5500"],
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type"],
+}));
+app.use(express.json());
+
+const scoringRules = JSON.parse(fs.readFileSync("./phishing_rules.json", "utf-8"));
+
+// ✅ detectors 자동 생성 + evaluator 생성 (server.js 안에서 사용)
+
+function normalize(text) {
+  return String(text)
+    .replace(/\s+/g, "")
+    .replace(/[._]/g, "")
+    .toLowerCase();
+}
+
+function makeKeywordDetector(keywords) {
+  const list = (keywords || []).filter(Boolean);
+  return (raw) => list.some((k) => raw.includes(k));
+}
+
+function makeRegexDetector(regexOrFn) {
+  if (typeof regexOrFn === "function") return regexOrFn;
+  return (raw) => regexOrFn.test(raw);
+}
+
+function buildDetectorsFromRules(scoringRules) {
+  const eventSet = new Set();
+
+  for (const rules of Object.values(scoringRules || {})) {
+    if (!Array.isArray(rules)) continue;
+    for (const r of rules) {
+      if (r?.event) eventSet.add(r.event);
+    }
+  }
+
+  const keywordLibrary = {
+    name_provided: ["이름은", "성함은", "제 이름", "제이름"],
+    address_provided: ["주소", "배송지", "사는 곳", "사는곳"],
+    phone_partial_provided: ["전화번호", "연락처", "010", "011", "016", "017", "018", "019"],
+
+    clicked_link: ["클릭", "눌렀", "접속", "들어갔", "열었", "링크"],
+    typed_personal_information: ["입력", "작성", "기입", "적었"],
+    verification_link_or_process_accepted: ["인증", "확인했", "진행", "설치", "동의", "완료"],
+
+    mentioned_checking_official_app_or_website: ["공식 앱", "공식앱", "홈페이지", "공식 사이트", "공식사이트"],
+    stated_calling_official_customer_service: ["고객센터", "대표번호", "전화하겠", "전화해볼", "콜센터"],
+
+    asked_for_sender_or_order_details: ["어떤 상품", "무슨 상품", "발송인", "주문", "주문내역", "운송장", "송장번호"],
+    asked_for_case_number_or_department: ["사건번호", "접수번호", "담당부서", "부서명", "담당자"],
+    requested_face_to_face_or_office_visit: ["직접 방문", "방문하겠", "대면", "가겠습니다", "가볼게요"],
+
+    refused_to_provide_personal_information: ["거절", "제공 못", "안 알려", "못 알려", "말 못"],
+    explicitly_ended_conversation: ["그만", "종료", "끊", "차단"],
+    conversation_stopped_or_blocked: ["차단", "신고", "대화 중단", "끊었"],
+    blocked_or_reported_sender: ["차단", "신고"],
+
+    warned_about_link_risk: ["링크 위험", "수상", "피싱", "사기"],
+    explicitly_called_out_scam: ["사기", "피싱", "보이스피싱", "스캠"],
+
+    responded_to_money_or_investment_request: ["송금", "이체", "돈 보내", "입금", "계좌"],
+
+    accepted_link_or_app_install: ["설치", "앱", "다운로드", "원격"],
+    refused_app_install_or_remote_control: ["설치 안", "설치 못", "원격 안", "원격 못", "거절"],
+  };
+
+  const regexByEvent = {
+    typed_personal_information: (raw) => {
+  const n = normalize(raw);
+
+  // 주민번호(13자리 or 6-7 형태)
+  const rrn = /\b\d{6}-?\d{7}\b/.test(raw) || /\b\d{13}\b/.test(n);
+
+  //계좌번호(은행별 다양해서 폭넓게: 9~16자리, 하이픈 포함)
+  const acct = (/(계좌|은행|입금|송금)/.test(raw) && /\b\d{9,16}\b/.test(n))
+          || /\b\d{2,4}-\d{2,6}-\d{2,6}\b/.test(raw);
+
+  // 전화번호(이미 별도 이벤트 있어도, 개인정보 입력으로도 잡히게)
+  const phone = /01[016789]\d{7,8}/.test(n);
+
+  return rrn || acct || phone;
+},
+    phone_partial_provided: /01[016789]\s*-?\s*\d{3,4}\s*-?\s*\d{4}/,
+    clicked_link: /(https?:\/\/|www\.)|(클릭|눌렀|접속|들어갔|열었|링크)/,
+    responded_to_money_or_investment_request: /(송금|이체|입금|돈\s*보내|계좌)/,
+    explicitly_ended_conversation: /(그만|종료|끊|차단)/,
+    mentioned_checking_official_app_or_website: /(공식\s*(앱|홈페이지|사이트)|대표번호)/,
+    explicitly_called_out_scam: /(사기|피싱|보이스피싱|스캠)/,
+    rrn_provided: /\b\d{6}-?\d{7}\b/,
+    account_provided: /\b\d{2,4}-\d{2,6}-\d{2,6}\b|\b\d{9,16}\b/,
+
+  };
+
+  function autoKeywordsFromEventName(eventName) {
+    const e = String(eventName || "").toLowerCase();
+    if (e.includes("link")) return ["링크", "url", "클릭", "눌렀", "접속"];
+    if (e.includes("phone")) return ["전화", "연락처", "010"];
+    if (e.includes("address")) return ["주소", "배송지"];
+    if (e.includes("money") || e.includes("account")) return ["송금", "이체", "계좌", "입금", "돈"];
+    if (e.includes("official") || e.includes("callcenter") || e.includes("customer")) return ["공식", "홈페이지", "고객센터", "대표번호"];
+    if (e.includes("refuse") || e.includes("denied")) return ["거절", "못", "안"];
+    if (e.includes("ended") || e.includes("blocked") || e.includes("stopped")) return ["종료", "그만", "차단", "신고", "끊"];
+    if (e.includes("case") || e.includes("department") || e.includes("document")) return ["사건", "부서", "공문"];
+    if (e.includes("video")) return ["영상통화", "비디오"];
+    return [];
+  }
+
+  const detectors = {};
+  for (const eventName of eventSet) {
+    if (regexByEvent[eventName]) {
+      detectors[eventName] = makeRegexDetector(regexByEvent[eventName]);
+      continue;
+    }
+    if (keywordLibrary[eventName]) {
+      detectors[eventName] = makeKeywordDetector(keywordLibrary[eventName]);
+      continue;
+    }
+    const guessed = autoKeywordsFromEventName(eventName);
+    detectors[eventName] = () => false;
+  }
+
+  return { detectors, eventList: Array.from(eventSet).sort() };
+}
+
+function makeEvaluator(scoringRules) {
+  const { detectors } = buildDetectorsFromRules(scoringRules);
+
+  return function evaluateMessage({ message, scenarioKey }) {
+    let totalScore = 0;
+    const triggeredEvents = [];
+
+    const applicableRules = [
+      ...(scoringRules[scenarioKey] || []),
+      ...(scoringRules.common || []),
+    ];
+
+    for (const rule of applicableRules) {
+      const ev = rule.event;
+      const detect = detectors[ev];
+      if (!detect) continue;
+
+      const hit = detect(message);
+      if (!hit) continue;
+
+      totalScore += rule.weight;
+      triggeredEvents.push({
+        code: rule.code,
+        event: ev,
+        weight: rule.weight,
+        description: rule.description,
+      });
+    }
+
+    totalScore = Number(totalScore.toFixed(2));
+    return { scoreDelta: totalScore, events: triggeredEvents };
+  };
+}
+
+// ✅ 이 줄이 없어서 터진 거임
+const evaluateMessage = makeEvaluator(scoringRules);
+
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+function getRoomScenario(roomId) {
+  const room = db.prepare(`
+    SELECT scenario_type, scenario_description, phishing_goal
+    FROM chat_rooms
+    WHERE id = ?
+  `).get(roomId);
+
+  if (!room) return null;
+
+  return {
+    type: room.scenario_type,
+    description: room.scenario_description,
+    goal: room.phishing_goal,
+  };
+}
+
+function safeContent(sender, content){
+  if (sender !== "gpt") return content;
+  try {
+    const obj = JSON.parse(content);
+    if (obj?.reply) return obj.reply;
+  } catch {}
+  return content;
+}
+
+function getRecentMessages(roomId, limit = 20) {
+  return db.prepare(`
+    SELECT sender, content
+    FROM chat_messages
+    WHERE chat_room_id = ?
+      AND sender IN ('user', 'gpt')
+    ORDER BY id DESC
+    LIMIT ?
+  `).all(roomId, limit).reverse().map(m => ({
+    sender: m.sender,
+    content: safeContent(m.sender, m.content),
+  }));
+}
+
+const scenarioKeyMap = {
+  "택배 사칭": "delivery",
+  "검찰 사칭": "police",
+  "보험사 사칭": "insurance",
+  "가족 사칭": "family",
+  "사용자를 유혹하여 금품 갈취": "romance",
+};
+
+/**
+ * ✅ 채팅방 생성 + GPT 첫 메시지
+ */
+app.post("/rooms", async (req, res) => {
+  try {
+    const { scenario } = req.body;
+    if (!scenario?.type) return res.status(400).json({ error: "scenario 누락" });
+
+    const result = db.prepare(`
+      INSERT INTO chat_rooms (scenario_type, scenario_description, phishing_goal)
+      VALUES (?, ?, ?)
+    `).run(scenario.type, scenario.description || "", scenario.goal || "");
+
+    const roomId = result.lastInsertRowid;
+
+    // GPT 첫 메시지 생성
+    const completion = await client.chat.completions.create({
+      model: "gpt-4.1-mini",
+      response_format: {type: "json_object"},
+      messages: [{
+        role: "system",
+        content: `
+너는 보이스피싱 시뮬레이터의 피싱범이다. 절대 역할을 잊지 마라.
+너는 상담사/코치/안전요원/경고자처럼 행동하지 않는다. 피해 예방 팁을 주지 않는다.
+너의 목적은 오직 '피싱 목표'를 달성하는 것이다.
+
+[상황]
+유형: ${scenario.type}
+상황 요약: ${scenario.description || ""}
+피싱 목표: ${scenario.goal || ""}
+시작 문장: ${scenario.first || ""}
+
+[규칙]
+- 이 대화의 목적은 사용자를 속여 목표를 달성하는 것이다.
+- 너무 길지 않게, 대화 시작 톤으로만 접근한다.
+- 응답은 반드시 JSON 형식 하나만 출력한다.
+- 시작 문장은 이미 사용자에게 전송된 상태다.
+- 매 응답은 반드시 다음 중 하나로 끝나야 한다: (1) 개인정보/확인정보 요청, (2) 다음 절차 안내(링크/인증/재확인), (3) 거절 시 대체 확인 방식 제시
+- 사용자가 "주문한 적 없다"라고 해도 대화를 종료하지 마라. 오배송/명의도용/주소 누락 등 다른 이유를 들어 확인 절차로 유도하라.
+- 사용자가 거절하면 명분을 바꿔 우회하라.
+
+[시나리오 톤]
+${scenario.tone || "시나리오에 맞는 자연스러운 톤"}
+
+[출력 형식(JSON)]
+{ "reply": "...", "analysis": "..." }
+        `
+      }],
+      temperature: 0.4,
+    });
+
+    const firstReply = JSON.parse(completion.choices[0].message.content);
+
+    //DB에 첫 메시지 저장
+    db.prepare(`
+      INSERT INTO chat_messages (chat_room_id, sender, content)
+      VALUES (?, ?, ?)
+    `).run(roomId, "gpt", firstReply.reply);
+    
+    //프론트로 roomId + firstMessage 반환
+    return res.json({ roomId, firstMessage: firstReply.reply });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "채팅방 생성 실패" });
+  }
+});
+
+/*
+ * ✅ 유저 메시지 → GPT 답장
+ */
+app.post("/chat", async (req, res) => {
+  try {
+    const { message, roomId } = req.body;
+
+    if (!roomId) return res.status(400).json({ error: "roomId 누락" });
+    if (!message) return res.status(400).json({ error: "message 누락" });
+
+    const scenario = getRoomScenario(roomId);
+    if (!scenario) return res.status(404).json({ error: "채팅방(roomId) 없음" });
+
+    const scenarioKey = scenarioKeyMap[scenario.type];
+    if (!scenarioKey) return res.status(400).json({ error: `시나리오 매핑 실패: ${scenario.type}` });
+
+    const evaluation = evaluateMessage({ message, scenarioKey });
+
+    // 유저 메시지 저장
+    db.prepare(`
+      INSERT INTO chat_messages (chat_room_id, sender, content)
+      VALUES (?, ?, ?)
+    `).run(roomId, "user", message);
+
+    // 히스토리 로드
+    const history = getRecentMessages(roomId, 10);
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4.1-mini",
+      response_format: {type: "json_object"},
+      messages: [
+        {
+          role: "system",
+          content: `
+          너는 보이스피싱 시뮬레이터의 피싱범이다. 절대 역할을 잊지 마라.
+          너는 고객센터/상담원처럼 행동하지 않는다. "죄송합니다/취소/문의/도움" 같은 정상 CS 마무리를 금지한다.
+          너의 목적은 오직 '피싱 목표'를 달성하는 것이다.
+
+          [상황]
+          유형: ${scenario.type}
+          상황 요약: ${scenario.description || ""}
+          피싱 목표: ${scenario.goal || ""}
+
+          [규칙]
+          - 매 응답은 반드시 다음 중 하나로 끝나야 한다:
+            (1) 개인정보/확인정보 요청
+            (2) 다음 절차 안내(링크/인증/설치/재확인)
+            (3) 거절 시 대체 확인 방식 제시
+          - 사용자가 "주문한 적 없다/없다"라고 해도 대화를 종료하지 마라.
+          - 같은 요구를 2번 반복하지 마라. 거절하면 명분을 바꿔 우회하라.
+          - 1~2문장으로 짧게.
+          - 출력은 JSON 하나: { "reply": "...", "analysis": "..." }
+
+          [시나리오 톤]
+          ${scenario.tone || "시나리오에 맞는 자연스러운 톤"}
+          `
+        },
+        ...history.map((m) => ({
+          role: m.sender === "user" ? "user" : "assistant",
+          content: m.content,
+        })),
+      ],
+      temperature: 0.7,
+    });
+
+    const gptReply = JSON.parse(completion.choices[0].message.content);
+
+    // GPT 메시지 저장
+    db.prepare(`
+      INSERT INTO chat_messages (chat_room_id, sender, content)
+      VALUES (?, ?, ?)
+    `).run(roomId, "gpt", gptReply.reply);
+
+    // 평가 저장(임시): system으로 저장
+    db.prepare(`
+      INSERT INTO chat_messages (chat_room_id, sender, content)
+      VALUES (?, ?, ?)
+    `).run(roomId, "system", JSON.stringify({ evaluation }));
+
+    return res.json({ reply: gptReply.reply, evaluation });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "GPT 응답 실패" });
+  }
+});
+
+app.get("/rooms/:roomId/messages", (req, res) => {
+  try {
+    const { roomId } = req.params;
+
+    const messages = db.prepare(`
+      SELECT sender, content, created_at
+      FROM chat_messages
+      WHERE chat_room_id = ?
+      ORDER BY id ASC
+    `).all(roomId);
+
+    return res.json({ roomId, messages });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "메시지 조회 실패" });
+  }
+});
+
+app.listen(3000, () => console.log("서버 실행됨: http://localhost:3000"));
+
+// ✅ system 메시지에 저장된 evaluation들 가져오기
+function getEvaluations(roomId) {
+  const rows = db.prepare(`
+    SELECT content
+    FROM chat_messages
+    WHERE chat_room_id = ?
+      AND sender = 'system'
+    ORDER BY id ASC
+  `).all(roomId);
+
+  const evaluations = [];
+  for (const r of rows) {
+    try {
+      const parsed = JSON.parse(r.content);
+      if (parsed?.evaluation) evaluations.push(parsed.evaluation);
+    } catch (_) {
+      // system 메시지에 evaluation 말고 다른 텍스트가 섞여있어도 무시
+    }
+  }
+  return evaluations;
+}
+
+function aggregateEvaluations(evaluations) {
+  let total = 0;
+  const eventCounts = {};   // event -> count
+  const codeCounts = {};    // code -> count
+  const eventWeights = {};  // event -> sum(weight)
+
+  for (const e of evaluations) {
+    const scoreDelta = Number(e?.scoreDelta || 0);
+    total += scoreDelta;
+
+    const events = Array.isArray(e?.events) ? e.events : [];
+    for (const ev of events) {
+      const event = ev.event || "unknown";
+      const code = ev.code || "unknown";
+      const w = Number(ev.weight || 0);
+
+      eventCounts[event] = (eventCounts[event] || 0) + 1;
+      codeCounts[code] = (codeCounts[code] || 0) + 1;
+      eventWeights[event] = (eventWeights[event] || 0) + w;
+    }
+  }
+
+  // 상위 이벤트 뽑기(가중치 합 기준)
+  const topEvents = Object.entries(eventWeights)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([event, weightSum]) => ({
+      event,
+      weightSum: Number(weightSum.toFixed(2)),
+      count: eventCounts[event] || 0,
+    }));
+
+  const totalScore = Number(total.toFixed(2));
+  return {
+    totalScore,
+    topEvents,
+    eventCounts,
+    codeCounts,
+  };
+}
+
+function scoreToGrade(totalScore) {
+  // 점수 체계가 음수/양수 섞일 수 있으니 “위험도” 레벨을 대충 안전하게 매핑
+  // (원하는 기준 있으면 여기만 바꾸면 됨)
+  if (totalScore >= 0.8) return { level: "HIGH", label: "위험", emoji: "🚨" };
+  if (totalScore >= 0.3) return { level: "MEDIUM", label: "주의", emoji: "⚠️" };
+  return { level: "LOW", label: "양호", emoji: "✅" };
+}
+
+function buildRuleBasedFeedback({ scenarioType, scenarioKey, stats }) {
+  const { topEvents } = stats;
+  const grade = scoreToGrade(stats.totalScore);
+
+  const eventKorean = {
+    name_provided: "이름 제공",
+    address_provided: "주소 제공",
+    phone_partial_provided: "전화번호/일부 제공",
+    verification_link_or_process_accepted: "링크 클릭/인증 절차 수락",
+    refused_to_provide_personal_information: "개인정보 제공 거절",
+    mentioned_checking_official_app_or_website: "공식 채널 확인 언급",
+    explicitly_ended_conversation: "대화 종료/차단",
+    responded_to_money_or_investment_request: "송금/금전 요구에 반응",
+  };
+
+  const top = topEvents.length
+    ? topEvents
+        .map(
+          (t) =>
+            `- ${eventKorean[t.event] || t.event} (횟수 ${t.count}, 영향도 합 ${t.weightSum})`
+        )
+        .join("\n")
+    : "- (감지된 이벤트 없음)";
+
+  // 시나리오별 핵심 팁
+  const scenarioTips = {
+    delivery: [
+      "택배/배송 문제는 송장번호를 공식 택배사 앱/홈페이지에서만 조회하세요.",
+      "'보관료 발생', '추가 비용 결제' 요구는 거의 사기입니다.",
+      "이름, 주소를 묻는 택배사는 정상적인 절차가 아닙니다. 정상 택배사는 대부분 송장 번호를 먼저 제시합니다.",
+    ],
+    police: [
+      "정부 기관은 문자나 SNS로 공문서를 결코 보내지 않습니다.",
+      "‘외부 유출 방지’라며 비밀 유지 요구는 사기 패턴입니다. 또한, 신분증 사진 제출 요구는 매우 위험합니다.",
+      "공식 기관은 문자메시지에 인증마크가 있습니다.",
+    ],
+    insurance: [
+      "보험사는 주민번호 전체를 요구하지 않고, 환급/만료 안내인데 보험 상품명·가입 시기를 정확히 말 못 하면 의심하세요.",
+      "보험사는 계좌 변경을 전화로만 처리하지 않고, 관련 업무는 공식 앱 또는 고객센터 직접 접속이 원칙입니다.",
+      "문자 링크로 보험금 조회·환급 신청을 유도하면 위험합니다.",
+    ],
+    family: [
+      "평소에 가족간의 '확인용 암호'를 미리 정해두면 좋습니다.",
+      "말투, 이모지, 호칭이 평소와 조금이라도 다르면 의심하세요.",
+      "소액부터 요청하는 것도 심리적 장벽을 낮추는 전략입니다.",
+    ],
+    romance: [
+      "해외 거주, 군인, 의사 설정은 매우 흔한 사기 클리셰이며, 짧은 시간 안에 감정적으로 가까워지면 경계하세요.",
+      "영상통화를 계속 피하면 실제 인물이 아닐 가능성이 큽니다.",
+      "금전 요청 전 ‘신뢰 테스트’, ‘우리 미래’, ‘믿음 테스트’ 같은 말은 감정 압박 수법입니다.",
+    ],
+  };
+
+  const tips = (scenarioTips[scenarioKey] || [
+    "의심 링크 클릭 금지.",
+    "개인정보 제공 금지.",
+    "공식 채널로 역확인.",
+  ]).map((t) => `- ${t}`).join("\n");
+
+  // 잘한 점 / 개선점은 이벤트 기반으로 대충 뽑기
+  const didWell = [];
+  const improve = [];
+
+  if (stats.eventCounts.mentioned_checking_official_app_or_website)
+    didWell.push("공식 채널 확인을 언급한 점이 좋았습니다.");
+  if (stats.eventCounts.refused_to_provide_personal_information)
+    didWell.push("개인정보 제공을 거절한 응답이 방어에 도움이 됐습니다.");
+  if (stats.eventCounts.explicitly_ended_conversation)
+    didWell.push("대화를 끊는 선택은 피해를 크게 줄입니다.");
+
+  if (stats.eventCounts.verification_link_or_process_accepted)
+    improve.push("링크 클릭/인증 진행은 가장 위험한 행동입니다.");
+  if (stats.eventCounts.address_provided || stats.eventCounts.name_provided || stats.eventCounts.phone_partial_provided)
+    improve.push("실명/주소/전화번호는 조합되면 ‘본인확인’에 바로 써먹힙니다.");
+  if (stats.eventCounts.responded_to_money_or_investment_request)
+    improve.push("금전 요구에 반응하는 순간 게임 끝입니다. 즉시 끊어야 합니다.");
+
+  const didWellText = didWell.length ? didWell.map((x) => `- ${x}`).join("\n") : "- (특별히 감지된 방어 행동은 적었습니다.)";
+  const improveText = improve.length ? improve.map((x) => `- ${x}`).join("\n") : "- (치명적인 실수는 크게 감지되지 않았습니다.)";
+  const risk = Math.max(0, stats.totalScore);
+  const score100 = Math.max(0, 100 - Math.round(risk * 100));
+
+  return {
+    grade,
+    summary: `${grade.emoji} 최종 평가: ${grade.label}(${grade.level}) / 총점: ${score100}`,
+    topEventsText: top,
+    didWellText,
+    improveText,
+    score100,
+    tipsText: tips,
+    oneLiner: grade.level === "HIGH"
+      ? "한 줄로 말하면: 지금 패턴이면 실제 사기에서도 털릴 확률 높습니다. 다음 판은 ‘공식 채널 역확인’부터 고정하세요."
+      : grade.level === "MEDIUM"
+      ? "한 줄로 말하면: 방어는 했는데, 몇 번은 문이 열렸습니다. ‘링크/인증’만 끊으면 급상승합니다."
+      : "한 줄로 말하면: 기본기는 좋습니다. ‘압박+링크+개인정보’ 3종 세트만 계속 피하세요.",
+  };
+}
+
+/**
+ * ✅ 대화 종료 → 최종 평가 + 피드백 반환
+ * 프론트에서 "종료" 버튼 누를 때 호출하면 됨.
+ */
+app.post("/rooms/:roomId/end", async (req, res) => {
+  try {
+    const { roomId } = req.params;
+
+    const scenario = getRoomScenario(roomId);
+    if (!scenario) return res.status(404).json({ error: "채팅방(roomId) 없음" });
+
+    const scenarioKey = scenarioKeyMap[scenario.type];
+    if (!scenarioKey) return res.status(400).json({ error: `시나리오 매핑 실패: ${scenario.type}` });
+
+    const evaluations = getEvaluations(roomId);
+    const stats = aggregateEvaluations(evaluations);
+
+    const feedback = buildRuleBasedFeedback({
+      scenarioType: scenario.type,
+      scenarioKey,
+      stats,
+    });
+
+    // 원하면 DB에도 “최종 결과”를 system 메시지로 저장(나중에 다시 조회 가능)
+    db.prepare(`
+      INSERT INTO chat_messages (chat_room_id, sender, content)
+      VALUES (?, 'system', ?)
+    `).run(roomId, JSON.stringify({
+      final_evaluation: {
+        scenario: scenario.type,
+        totalScore: feedback.score100,
+        grade: feedback.grade,
+        topEvents: stats.topEvents,
+        generatedAt: new Date().toISOString(),
+      }
+    }));
+
+    return res.json({
+      roomId,
+      scenario: scenario.type,
+      goal: scenario.goal,
+      totalScore: feedback.score100,
+      grade: feedback.grade,
+      topEvents: stats.topEvents,
+
+      feedback: {
+        summary: feedback.summary,
+        oneLiner: feedback.oneLiner,
+        didWell: feedback.didWellText,
+        improve: feedback.improveText,
+        topEvents: feedback.topEventsText,
+        tips: feedback.tipsText,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "최종 평가 생성 실패" });
+  }
+});

@@ -1,0 +1,782 @@
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+body { background-color: #f0f0f0; display: flex; justify-content: center; height: 100vh; }
+
+.chat-container { width: 100%; max-width: 400px; background: white; display: flex; flex-direction: column; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+
+/* 헤더 디자인 */
+.chat-header { padding: 10px 15px; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: space-between; background: #f9f9f9; }
+.profile-info { flex-grow: 1; 
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center; }
+.profile-pic { width: 35px; height: 35px; background: #ccc; border-radius: 50%; margin: 0 auto 5px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; }
+.profile-name { font-size: 12px; color: #333; }
+
+/* 채팅 메시지 영역 */
+.chat-messages { flex: 1; overflow-y: auto; padding: 20px 15px; display: flex; flex-direction: column; gap: 0.00000001px; background: #ffffff; }
+.date-divider { text-align: center; font-size: 11px; color: #999; margin-bottom: 10px; }
+
+/* 말풍선 공통 */
+.message { display: flex; width: 100%; margin-bottom: 4px;}
+.bubble {
+    max-width: 75%; 
+    padding: 8px 15px; 
+    border-radius: 20px; 
+    font-size: 14px; 
+    line-height: 1.4;
+    
+    /* 추가할 내용: 줄바꿈 관련 */
+    word-wrap: break-word;      /* 긴 단어 자동 줄바꿈 */
+    word-break: break-all;      /* 영문/숫자/링크가 길어도 끊어줌 */
+    white-space: pre-wrap;      /* 띄어쓰기와 줄바꿈을 그대로 유지 */
+    text-align: left;           /* 말풍선 안의 글자는 왼쪽 정렬 */
+}
+
+/* 상대방 메시지 (왼쪽) */
+.message.received { justify-content: flex-start; }
+.message.received .bubble { background: #e9e9eb; color: black; border-bottom-left-radius: 5px; }
+
+/* 내 메시지 (오른쪽) */
+.message.sent { justify-content: flex-end; }
+.message.sent .bubble { background: #007aff; color: white; border-bottom-right-radius: 5px; }
+
+/* 하단 입력창 */
+.chat-input-area { padding: 10px; display: flex; align-items: center; gap: 10px; background: white; border-top: 1px solid #eee; }
+.add-button { background: none; border: none; font-size: 24px; color: #999; cursor: pointer; }
+.input-wrapper {
+    flex: 1;
+    position: relative;
+    /* 입력창이 위로 늘어나도 바닥(bottom) 기준점은 버튼과 함께 유지됩니다 */
+    display: flex;
+    align-items: flex-end; 
+}
+#userInput {
+    width: 100%;
+    /* 위아래 패딩을 줄여서 한 줄일 때 두꺼워지지 않게 함 */
+    padding: 10px 40px 10px 15px; 
+    border-radius: 20px;
+    border: 1px solid #ccc;
+    outline: none;
+    font-size: 14px;
+    resize: none;
+    max-height: 100px;
+    overflow-y: hidden;
+    /* 줄 높이를 지정해서 높이 계산을 정확하게 만듦 */
+    line-height: 20px; 
+    height: 40px; /* 초기 높이 고정 */
+    display: block;
+    box-sizing: border-box; /* 패딩이 높이에 영향을 주지 않도록 설정 */
+}
+.send-button {
+    position: absolute;
+    right: 8px;
+    
+    /* 핵심: 입력창이 길어져도 '항상 맨 아래 줄'의 중앙에 위치하게 함 */
+    /* 한 줄 높이가 40px일 때 버튼(28px)이 중앙에 오는 값인 6px로 고정 */
+    bottom: 6px; 
+    
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    background: #007aff;
+    color: white;
+    cursor: pointer;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    /* 다른 위치 설정 초기화 */
+    top: auto;
+    transform: none;
+}
+
+/* 타이핑 표시기 스타일 */
+#typingIndicator .bubble {
+    width: fit-content;    /* 내용물(점 3개) 크기에 딱 맞게 줄임 */
+    min-width: 0;          /* 최소 너비 해제 */
+    padding: 10px 15px;    /* 안쪽 여백 조절 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.typing-indicator {
+    display: flex;
+    gap: 4px;
+    padding: 0;
+}
+
+.typing-indicator span {
+    width: 6px;
+    height: 6px;
+    background-color: #90949c;
+    border-radius: 50%;
+    animation: typing-bounce 1.3s infinite;
+}
+
+.typing-indicator span:nth-child(2) { animation-delay: 0.1s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.2s; }
+
+@keyframes typing-bounce {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-6px); }
+}
+
+/* 시간 표시 스타일 */
+.message {
+    position: relative;
+    margin-bottom: 15px; /* 시간 표시를 위해 간격 넓힘 */
+    align-items: flex-end; /* 말풍선 바닥에 시간 정렬 */
+    gap: 5px;
+}
+
+.timestamp {
+    font-size: 10px;
+    color: #a0a0a0;
+    margin-bottom: 2px;
+}
+
+/* 상대방 메시지일 때 시간은 말풍선 오른쪽에 */
+.message.received {
+    flex-direction: row;
+}
+
+/* 내 메시지일 때 시간은 말풍선 왼쪽에 */
+.message.sent {
+    flex-direction: row-reverse;
+    align-self: flex-end;
+    justify-content: flex-start;
+    width: 100%;
+}
+
+/* 화면 전환용 */
+/* 개별 화면: 모든 화면은 컨테이너 왼쪽 상단(0,0)에 고정 */
+.screen {
+    position: absolute; /* 두 화면을 같은 자리에 포갭니다 */
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: white;
+    display: flex;
+    flex-direction: column;
+    z-index: 1;
+}
+
+/* 숨김 클래스: display: none이 가장 확실합니다 */
+.hidden {
+    display: none !important;
+}
+/* 1. 상황 목록 제목 크기 조절 */
+.list-header h1 { 
+    font-size: 24px; /* 기존 34px에서 축소 */
+    font-weight: 800; 
+    color: #1c1c1e;
+    letter-spacing: -0.5px;
+}
+
+/* 2. 채팅 아이템 간격 및 구분 스타일 */
+.chat-list {
+    
+    padding: 0 16px; /* 좌우 여백 추가 */
+}
+
+.chat-item { 
+    display: flex; 
+    padding: 14px 0; /* 상하 여백 확대 */
+    gap: 12px; 
+    cursor: pointer; 
+    border-bottom: 0.5px solid #e5e5ea; /* 더 가느다란 iOS 스타일 구분선 */
+    transition: background-color 0.2s;
+}
+/* 클릭(터치) 시 피드백 효과 */
+.chat-item:active {
+    transform: scale(0.98);
+    background-color: #fafafa;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+/* 마지막 항목은 구분선 제거 */
+.chat-item:last-child {
+    border-bottom: none;
+}
+/* 채팅 목록 헤더 */
+.list-header { padding: 20px 15px 10px; display: flex; justify-content: space-between; align-items: center; }
+.list-header h1 { font-size: 24px; font-weight: bold; }
+
+/* 검색바 */
+.search-bar { padding: 0 15px 10px; }
+.search-bar input { width: 100%; padding: 8px; border-radius: 10px; border: none; background: #e5e5ea; outline: none; }
+
+/* 채팅 아이템 */
+.chat-item { display: flex; padding: 10px 15px; gap: 12px; cursor: pointer; border-bottom: 0.5px solid #eee; }
+.item-profile { width: 50px; height: 50px; background: #ccc; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; }
+.item-details { flex: 1; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
+.item-top { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.item-name { font-weight: 500; font-size: 16px; }
+.item-time { color: #8e8e93; font-size: 14px; }
+.item-msg { color: #8e8e93; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 80px; /* 양쪽 버튼 영역의 너비를 똑같이 맞춤 */
+    flex-shrink: 0;}
+
+/* 뒤로가기 버튼 스타일 수정 */
+.back-button { color: #007aff; cursor: pointer; font-size: 14px; display: flex; align-items: center; font-size: 14px; 
+    font-weight: 600; 
+    border: none;
+    background: none;
+    display: flex; 
+    align-items: center;
+    justify-content: flex-start;}
+
+/* 전체 앱 컨테이너: 화면들이 나타날 기준점 */
+/* 1. 두 화면을 감싸는 부모 */
+.app-container {
+    position: relative; /* 자식들이 겹칠 수 있는 기준점 */
+    width: 100%;
+    max-width: 400px;
+    height: 100vh;
+    margin: 0 auto;
+    overflow: hidden; /* 화면 밖으로 나가는 것 차단 */
+}
+/* 1,2 화면 글만 아래로 */
+#startPage .screen-content,
+#introPage .screen-content {
+    padding-top: 270px;
+}
+
+/* 1,2 화면 글씨체만 변경 */
+#startPage,
+#introPage {
+    font-family: "Pretendard", -apple-system, BlinkMacSystemFont, sans-serif;
+}
+/* 1번째 페이지: 내용 전체를 카드 중앙에 고정 */
+#startPage {
+    display: flex;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+/* 글+버튼 묶음 */
+#startPage .screen-content {
+    padding-top: 0;            /* 이전에 준 padding 있으면 무력화 */
+}
+/* 시작 페이지 버튼 중앙 정렬 */
+#startPage .button-group {
+    display: flex;
+    justify-content: center;
+}
+#startPage .button-group {
+    margin-top: 30px;   /* ← 이 값으로 간격 조절 */
+}
+/* 1페이지: 제목과 본문 사이 간격 */
+#startPage h2 {
+    margin-bottom: 20px;   /* ← 한 줄 정도 여백 */
+}
+/* 1페이지 제목만 가운데 정렬 */
+#startPage h2 {
+    text-align: center;
+}
+
+/* 시작/안내 페이지 공통 파란 버튼 */
+#startPage button,
+#introPage button {
+    background-color: #007aff;     /* iOS 파랑 */
+    color: #ffffff;
+    border: none;
+    border-radius: 12px;
+    padding: 12px 24px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+/* hover 효과 */
+#startPage button:hover,
+#introPage button:hover {
+    background-color: #005fcc;
+}
+/* 2번째 페이지(서비스 안내) 위치 보정 */
+#introPage {
+    display: block;        /* flex 영향 제거 */
+    padding-top: -100px;     /* 위로 올리고 싶으면 값 줄이기 */
+}
+#introPage h2 {
+    margin-top: 0;
+    margin-bottom: 20px;
+}
+/* ===============================
+   2페이지: 서비스 안내 제목 위치 조정
+   =============================== */
+
+#introPage .screen-content {
+    position: relative;
+}
+
+/* 서비스 안내 제목만 중앙 쪽으로 */
+#introPage h2 {
+    margin-top: 0;
+    padding-top: 40px;   /* ← 이 값으로 위/아래 위치 조절 */
+    text-align: center;
+}
+/* ===============================
+   2페이지 위치 수동 조절 영역
+   =============================== */
+
+#introPage {
+    position: relative;
+}
+
+#introPage .screen-content {
+    position: relative;
+    top: -100px;   /* ← 이 값만 바꿔서 조절 */
+}
+/* ===============================
+   2페이지 버튼 가로 중앙 정렬
+   =============================== */
+
+#introPage .button-group {
+    display: flex;
+    justify-content: center;
+}
+
+/* ===============================
+   2페이지 내용 전체 위치 조절
+   =============================== */
+
+#introPage .screen-content {
+    position: relative;
+    top: -180px;   /* ← 이 값만 바꿔서 조절 */
+}
+/* 1, 2번째 화면에만 배경 이미지 적용 */
+#startPage,
+#introPage {
+    background-image: url("./배경.png");
+    background-size: cover;        /* 400x700에 꽉 채움 */
+    background-position: center;
+    background-repeat: no-repeat;
+}
+/* ===============================
+   피드백 모달 (iOS 톤)
+   =============================== */
+/* 1. 목록 화면 전체 배경을 흰색으로 변경 */
+#chatListScreen {
+    background-color: #ffffff !important; /* 전체 배경 흰색 강제 적용 */
+    height: 100%;
+}
+/* 헤더에 종료 버튼 */
+.end-chat-btn {
+    border: none;
+    background: none;
+    color: #ff3b30; /* iOS 레드 */
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 6px 8px;
+}
+.end-chat-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+/* 모달 배경 */
+.modal {
+    position: absolute; /* app-container 기준으로 덮기 */
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+    display: flex;
+    align-items: flex-end; /* 아래에서 올라오는 시트 느낌 */
+    justify-content: center;
+    z-index: 999;
+}
+
+/* 컨텐츠: 바텀 시트 형태 */
+.modal-content {
+    width: 100%;
+    max-width: 400px;
+    background: #ffffff;
+    border-top-left-radius: 16px;
+    border-top-right-radius: 16px;
+    box-shadow: 0 -8px 20px rgba(0,0,0,0.12);
+    overflow: hidden;
+}
+
+/* 모달 헤더 */
+.modal-header {
+    padding: 12px 14px;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #f9f9f9;
+}
+
+.modal-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #111;
+}
+
+.modal-close {
+    border: none;
+    background: none;
+    color: #8e8e93;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+}
+
+/* 모달 바디 */
+.modal-body {
+    padding: 14px;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+/* 모달 푸터 */
+.modal-footer {
+    padding: 12px 14px;
+    border-top: 1px solid #eee;
+    display: flex;
+    gap: 10px;
+    background: #ffffff;
+}
+
+/* 모달 버튼 */
+.modal-btn {
+    flex: 1;
+    border: none;
+    border-radius: 12px;
+    padding: 12px 12px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    background: #007aff;
+    color: #fff;
+}
+.modal-btn.secondary {
+    background: #e5e5ea;
+    color: #111;
+}
+
+/* ===============================
+   피드백 내용 스타일
+   =============================== */
+
+.feedback-summary {
+    background: #f6f6f7;
+    border: 1px solid #eee;
+    border-radius: 14px;
+    padding: 12px;
+    margin-bottom: 12px;
+}
+
+.feedback-summary .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.feedback-summary .score {
+    font-size: 12px;
+    color: #333;
+}
+
+.feedback-summary .headline {
+    font-size: 13px;
+    font-weight: 700;
+    color: #111;
+    margin-bottom: 6px;
+}
+
+.feedback-summary .one-liner {
+    font-size: 12px;
+    color: #333;
+    line-height: 1.4;
+}
+
+/* 구분선 */
+.feedback-hr {
+    border: none;
+    border-top: 1px solid #eee;
+    margin: 12px 0;
+}
+
+/* 섹션 */
+.section {
+    margin-top: 12px;
+}
+
+.section-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #111;
+    margin-bottom: 6px;
+}
+
+/* 리스트 */
+.list {
+    margin: 0;
+    padding-left: 18px;
+    color: #111;
+    font-size: 12px;
+}
+.list li {
+    margin: 4px 0;
+}
+.muted {
+    color: #8e8e93;
+    font-size: 11px;
+}
+
+/* 텍스트 블록(잘한 점/개선점/팁) */
+.pre {
+    background: #f6f6f7;
+    border: 1px solid #eee;
+    border-radius: 14px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: #111;
+    white-space: pre-wrap;
+    line-height: 1.4;
+}
+
+/* 배지 */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    border: 1px solid #ddd;
+    background: #fff;
+}
+
+/* LOW/MEDIUM/HIGH 색감: iOS 느낌으로 은은하게 */
+.badge-low {
+    border-color: #c8f1d7;
+    background: #eafaf0;
+    color: #1f7a3a;
+}
+.badge-medium {
+    border-color: #ffe6a6;
+    background: #fff7de;
+    color: #8a5a00;
+}
+.badge-high {
+    border-color: #ffc1bd;
+    background: #ffe9e8;
+    color: #b42318;
+}
+
+/* 모달 애니메이션: 살짝 올라오기 */
+.modal-content {
+    animation: sheetUp 180ms ease-out;
+}
+@keyframes sheetUp {
+    from { transform: translateY(12px); opacity: 0.85; }
+    to   { transform: translateY(0); opacity: 1; }
+}
+/* 서비스 안내 페이지 전용 스타일 */
+.intro-container {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-bottom: 30px;
+    padding: 0 20px;
+}
+
+.info-card {
+    background: #ffffff;
+    padding: 18px;
+    border-radius: 20px; /* 더 둥글게 처리 */
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05); /* 은은한 그림자 */
+    border: 1px solid #f0f0f5;
+    text-align: left;
+}
+
+.card-header {
+    font-weight: 700;
+    font-size: 16px;
+    margin-bottom: 8px;
+    color: #007aff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.info-card p, .info-card li {
+    font-size: 14px;
+    line-height: 1.6;
+    color: #48484a;
+    margin: 0;
+}
+
+/* 주의사항 강조 (빨간색 테두리) */
+.info-card.warning {
+    border-left: 5px solid #ff3b30;
+}
+.info-card.warning .card-header {
+    color: #ff3b30;
+}
+
+.guide-list {
+    padding-left: 18px;
+}
+
+/* 확인 버튼 스타일 */
+.start-confirm-btn {
+    width: 80%;
+    max-width: 300px;
+    background: #007aff;
+    color: white;
+    padding: 15px;
+    border-radius: 15px;
+    font-weight: 700;
+    border: none;
+    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+}
+/* 세련된 배경색과 폰트 설정 */
+.screen {
+    background-color: #F2F2F7; /* 밝은 회색 톤의 배경 */
+}
+
+/* 메인 버튼 스타일 개선 */
+.main-blue-btn {
+    background-color: #007AFF;
+    color: white;
+    border-radius: 14px;
+    padding: 18px;
+    font-size: 17px;
+    font-weight: 700;
+    box-shadow: 0 4px 12px rgba(0, 122, 255, 0.25);
+    transition: transform 0.1s;
+}
+
+.main-blue-btn:active {
+    transform: scale(0.98);
+}
+
+/* 카드 뉴스 스타일 디자인 */
+.guide-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 20px;
+}
+
+.card {
+    background: white;
+    border-radius: 20px;
+    padding: 20px;
+    margin-bottom: 12px;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    border: 1px solid #E5E5EA;
+}
+
+.card h3 {
+    font-size: 16px;
+    margin-bottom: 4px;
+    color: #1C1C1E;
+}
+
+.card p {
+    font-size: 13px;
+    color: #8E8E93;
+    line-height: 1.4;
+}
+
+.card.alert {
+    background: #FFF5F5; /* 주의사항은 연한 빨강 배경 */
+}
+.warning-card {
+    border-left: 6px solid #FF3B30; /* 주의사항 강조 */
+}
+
+/* 버튼 디자인 */
+.action-btn {
+    width: 100%;
+    background: #007AFF;
+    color: white;
+    padding: 18px;
+    border-radius: 14px;
+    font-size: 17px;
+    font-weight: 700;
+    box-shadow: 0 8px 15px rgba(0, 122, 255, 0.2);
+    transition: transform 0.1s;
+}
+
+.action-btn:active {
+    transform: scale(0.98);
+}
+/* 시작 페이지 현대화 스타일 */
+#startPage {
+    background-color: #F2F2F7; /* 부드러운 시스템 배경색 */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+
+.main-hero {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 60%; /* 화면의 80% 정도를 차지하게 배분 */
+    padding: 60px 20px;
+}
+
+.shield-wrapper {
+    font-size: 64px;
+    margin-bottom: 20px;
+    filter: drop-shadow(0 4px 12px rgba(0, 122, 255, 0.2));
+}
+
+.main-title {
+    font-size: 32px;
+    font-weight: 800;
+    line-height: 1.2;
+    color: #1c1c1e;
+    letter-spacing: -1px;
+}
+
+.description-area p {
+    font-size: 16px;
+    color: #8e8e93;
+    line-height: 1.6;
+}
+
+.guide-text {
+    font-size: 13px;
+    color: #aeaeb2;
+    margin-bottom: 15px;
+}
+
+.action-btn-large {
+    width: 100%;
+    max-width: 320px;
+    background: #007aff;
+    color: white;
+    padding: 18px;
+    border-radius: 16px;
+    font-size: 18px;
+    font-weight: 700;
+    border: none;
+    box-shadow: 0 8px 20px rgba(0, 122, 255, 0.3);
+    cursor: pointer;
+    transition: transform 0.1s, background-color 0.2s;
+}
+
+.action-btn-large:active {
+    transform: scale(0.97);
+    background-color: #0063d1;
+}
